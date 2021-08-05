@@ -1,0 +1,1719 @@
+---
+title: Project -Analytics
+author: Rajneetk
+date: '2021-08-02'
+slug: project-analytics
+categories:
+  - tree based
+  - Data analytics
+tags: []
+description: Article description.
+featured: yes
+toc: no
+featureImage: /images/path/file.jpg
+thumbnail: /images/path/thumbnail.png
+shareImage: /images/path/share.png
+codeMaxLines: 10
+codeLineNumbers: no
+figurePositionShow: yes
+---
+
+** Group Project: Predicting Delinquent Customer **
+
+# Problem Statement
+
+Thousands of credit card applications are received each year by CredX, a leading provider of credit cards. In recent years, however, it has seen a rise in the number of credit defaults. The CEO believes that acquiring the right customers is the best strategy for reducing credit risk.
+We are tasked with identifying the right customers for CredX's business using predictive models. Use historical data on bank applicants to identify factors that affect credit risk, develop strategies to reduce acquisition risk, and assess the project's financial benefit.
+
+# Background & Objective
+
+1) Background 
+
+* There are thousands of people who apply for a credit card with CredX every year. In recent years, however, it has seen a rise in the number of credit defaults.
+* The CEO believes that acquiring "the right customers" is the best strategy for mitigating credit risk.
+
+2) Objective
+
+* Using predictive modelling, CredX hopes to find the right customers. Credit risk factors must be identified, strategies must be developed to mitigate acquisition risk, and the financial benefits of your project must be assessed.
+* Our project must be evaluated and explained to bank management in terms of its potential financial benefit. We must also identify the metrics we are trying to optimise, explain how the analysis and model work, and present the model's results.
+* Create a scorecard for applicants and determine the minimum score below which you will not issue credit cards to them.
+
+# Problem Solving Methodology – Analysis Flow
+
+1) Data Preparation
+
+# Load library
+
+```{r, warning=FALSE}
+library(ggplot2)
+library(gridExtra)
+library(grid)
+library(MASS) 
+library(car)
+library(e1071)
+library(caret) 
+library(caTools)
+library(randomForest)
+library(ROCR)
+
+```
+
+a) Load datasets- Demographic and Credit Bureau Data
+
+```{r}
+demographic_df<- read.csv(file = 'demogs.csv',header = T,stringsAsFactors = T, na.strings = c("NA"))
+credit_df<- read.csv(file = 'Credit_Bureau.csv',header = T,stringsAsFactors = T, na.strings =c("NA"))
+
+
+```
+
+```{r}
+nrow(demographic_df)
+```
+
+```{r}
+nrow(credit_df)
+```
+
+b) Remove Duplicate Rows
+
+## Observing duplication in unique ID column before joining.
+
+```{r}
+sum(duplicated(demographic_df$Application.ID))
+sum(duplicated(credit_df$Application.ID))
+```
+
+There are 3 rows in which application id is duplicated.
+
+
+```{r}
+length(unique(tolower(demographic_df$Application.ID)))
+```
+
+
+```{r}
+length(unique(tolower(credit_df$Application.ID)))
+```
+
+```{r}
+demographic_df[duplicated(demographic_df$Application.ID),]
+credit_df[duplicated(credit_df$Application.ID),]
+```
+765011468,653287861,671989187 are duplicate application id in both the datasets.
+
+#Removing the duplicate entry for these application id
+
+```{r}
+demographic_df <- demographic_df[-which(duplicated(demographic_df$Application.ID) == T), ]
+credit_df <- credit_df[-which(duplicated(credit_df$Application.ID) == T), ]
+
+
+```
+
+```{r}
+nrow(credit_df)
+```
+
+```{r}
+nrow(demographic_df)
+```
+
+c) Merge Demographic and Credit Bureau Data on Applicant ID
+
+# Merging by common attributes and by unique rows  
+```{r}
+merged_df<- merge(x = unique(demographic_df)
+                  , y = unique(credit_df)
+                  , by = c("Application.ID", "Performance.Tag"))
+
+nrow(merged_df)
+```
+
+```{r}
+master_data_backup<-merged_df
+```
+
+# Dropping ID column as it is of no use.
+
+```{r}
+merged_df<-merged_df[,-1]
+```
+
+# check Duplicate rows in data 
+
+No duplicate rows present.
+
+```{r}
+sum(duplicated(merged_df))
+```
+
+#Finding rows where dependant variable-"Performance.Tag" is not populated. 
+
+```{r}
+rejected_applicants<-merged_df[which( is.na(merged_df$Performance.Tag)),]
+
+nrow(rejected_applicants)/nrow(merged_df) 
+```
+The dependent variable 'performance.tag' has NA values in only 1.9 percent of the rows.
+
+Assumption 1 - So model should be built on data where credit card was approved(0/1)
+
+performance.tag is not available for applicants for whom a credit decision was not made in the first place (NA).
+
+As a result, these rows will be removed from the table. Score cards would be verified using rejected applicants.
+
+
+```{r}
+data_for_eda <- merged_df[!is.na(merged_df$Performance.Tag) == TRUE,]
+
+str(data_for_eda)
+```
+
+# Summary of master data
+
+```{r, echo =FALSE}
+summary(data_for_eda)
+str(data_for_eda)
+```
+
+d) Check NAs and NANs
+
+# Missing and empty value detection and treatment
+
+```{r}
+missing_val_counts<- sapply(data_for_eda, function(x) sum(is.na(x)))
+
+missing_val_counts
+```
+
+3 NAs found in column - "No.of.dependents"
+1023 NAs in Avgas.CC.Utilization.in.last.12.months
+1 NA value detected in "No.of.trades.opened.in.last.6.months" column
+272 NAs in Presence.of.open.home.loan 
+272 NAs in Outstanding.Balance
+
+# Handle missing values by asssigning median value to respective NA records.
+
+```{r, echo=FALSE}
+data_for_eda$No.of.dependents[which(is.na(data_for_eda$No.of.dependents)==1)]<-median(data_for_eda$No.of.dependents, na.rm = T)
+data_for_eda$No.of.trades.opened.in.last.6.months[which(is.na(data_for_eda$No.of.trades.opened.in.last.6.months)==1)]=median(data_for_eda$No.of.trades.opened.in.last.6.months, na.rm = T)
+data_for_eda$Presence.of.open.home.loan[which(is.na(data_for_eda$Presence.of.open.home.loan)==1)] = median(data_for_eda$Presence.of.open.home.loan,na.rm = T)
+data_for_eda$Outstanding.Balance[which(is.na(data_for_eda$Outstanding.Balance)==1)] = median(data_for_eda$Outstanding.Balance,na.rm = T)
+```
+
+Assumption - 2 :
+NA value in Avgas.CC.Utilization.in.last.12.months  is indicating no usage of CC by user. So lets assign value 0 to these avg-cc-utilization values.
+
+```{r}
+data_for_eda$Avgas.CC.Utilization.in.last.12.months[which(is.na(data_for_eda$Avgas.CC.Utilization.in.last.12.months)==1)] = 0
+```
+
+## checking for empty values 
+
+```{r}
+empty_val_counts<- sapply(data_for_eda, function(x) sum(x==" " | x==""))
+
+empty_val_counts
+```
+we got:
+Gender - 2
+Marital.Status..at.the.time.of.application. - 6 
+Education - 118 
+Profession - 13 
+Type.of.residence - 8 
+
+# Repalce empty strings with values with maximum freq
+
+```{r}
+data_for_eda$Gender[which(data_for_eda$Gender==" " | data_for_eda$Gender==" ")]<- 'M'
+data_for_eda$Marital.Status..at.the.time.of.application.[which(data_for_eda$Marital.Status..at.the.time.of.application.==" " | data_for_eda$Marital.Status..at.the.time.of.application.==" ")]<- 'Married'
+data_for_eda$Education[which(data_for_eda$Education==" " | data_for_eda$Education==" ")]<- 'Professional'
+data_for_eda$Profession[which(data_for_eda$Profession==" " | data_for_eda$Profession==" ")]<- 'SAL'
+data_for_eda$Type.of.residence[which(data_for_eda$Type.of.residence==" " | data_for_eda$Type.of.residence==" ")]<- 'Rented'
+```
+
+e) Outlier Treatment
+
+# Method to find outliers
+
+```{r}
+FindOutliers <- function(data) {
+  lowerq = quantile(data,probs = seq(0,1,0.10))[3]  #20%
+  upperq = quantile(data,probs = seq(0,1,0.10))[9]  #80%
+  iqr = upperq - lowerq #Or use IQR(data)
+  extreme.threshold.upper = (iqr * 1.5) + upperq
+  extreme.threshold.lower = lowerq - (iqr * 1.5)
+  # we identify extreme outlier indeces
+  result <- which(data > extreme.threshold.upper | data < extreme.threshold.lower)
+} 
+
+company_recency_outliers <- data_for_eda[FindOutliers(data_for_eda$No.of.months.in.current.company),]
+avg_cc_utilization_outliers <- data_for_eda[FindOutliers(data_for_eda$Avgas.CC.Utilization.in.last.12.months),]
+last_6mon_trades_outliers <- data_for_eda[FindOutliers(data_for_eda$No.of.trades.opened.in.last.6.months),]
+last_12mon_trades_outliers <- data_for_eda[FindOutliers(data_for_eda$No.of.trades.opened.in.last.12.months),]
+last_6mon_pl_outliers <- data_for_eda[FindOutliers(data_for_eda$No.of.PL.trades.opened.in.last.6.months),]
+last_12mon_pl_outliers <- data_for_eda[FindOutliers(data_for_eda$No.of.PL.trades.opened.in.last.12.months),]
+last_6mon_inqr_outliers <- data_for_eda[FindOutliers(data_for_eda$No.of.Inquiries.in.last.6.months..excluding.home...auto.loans.),]
+last_12mon_inqr_outliers <- data_for_eda[FindOutliers(data_for_eda$No.of.Inquiries.in.last.12.months..excluding.home...auto.loans.),]
+total_trd_outliers <- data_for_eda[FindOutliers(data_for_eda$Total.No.of.Trades),]
+```
+
+We are not ceiling outliers to ensure no info loss.
+
+# Some outlier samples
+
+```{r}
+company_recency_outliers$No.of.months.in.current.company
+last_6mon_pl_outliers$No.of.PL.trades.opened.in.last.6.months
+total_trd_outliers$Total.No.of.Trades
+```
+
+Handling Invalid value
+
+#Invalid negative/zero value for age column populated for some row i.e. 0, -3
+
+```{r}
+invalid_age_index <-which(data_for_eda$Age < 10)
+```
+
+#populating median values for all these rows
+
+Assume age value substituted with median values where invalid. 
+
+```{r}
+data_for_eda$Age[invalid_age_index] <-median(data_for_eda$Age,na.rm = T)
+```
+
+#Invalid negative/zero value for Income column populated for some row
+
+```{r}
+invalid_income_index <-which(data_for_eda$Income < 0)
+```
+
+#populating median values for all these rows
+
+Assume Income value substituted with 0 values where invalid.
+
+```{r}
+data_for_eda$Income[invalid_income_index] <-0
+```
+
+# Assume card has not been used by these 1023 persons,so substituting NA by 0.
+
+```{r}
+data_for_eda$Avgas.CC.Utilization.in.last.12.months[is.na(data_for_eda$Avgas.CC.Utilization.in.last.12.months)] <- 0
+```
+
+# Assume No.of.dependents wherever NA,is substituting  by 0.
+
+```{r}
+data_for_eda$No.of.dependents[is.na(data_for_eda$No.of.dependents)] <- 0
+```
+
+# Assume Presence.of.open.home.loan wherever NA,is substituting  by 0.
+
+```{r}
+data_for_eda$Presence.of.open.home.loan[is.na(data_for_eda$Presence.of.open.home.loan)] <- 0
+```
+
+# Assume Outstanding.Balance wherever NA,is substituting  by 0 value.
+
+```{r}
+data_for_eda$Outstanding.Balance[is.na(data_for_eda$Outstanding.Balance)] <- 0
+```
+
+
+
+```{r, echo =FALSE}
+str(data_for_eda) 
+
+event_col<-c("Performance.Tag")  
+
+fact_cols <- c("Gender","Marital.Status..at.the.time.of.application." 
+               ,"Education","Profession","Type.of.residence")
+
+numeric_cols<-c('Age','Income','No.of.months.in.current.residence','No.of.months.in.current.company'
+                ,'Total.No.of.Trades','Outstanding.Balance','Avgas.CC.Utilization.in.last.12.months'
+                ,'No.of.times.90.DPD.or.worse.in.last.6.months','No.of.times.60.DPD.or.worse.in.last.6.months','No.of.times.30.DPD.or.worse.in.last.6.months'
+                ,'No.of.times.90.DPD.or.worse.in.last.12.months','No.of.times.60.DPD.or.worse.in.last.12.months','No.of.times.30.DPD.or.worse.in.last.12.months'
+                ,'No.of.trades.opened.in.last.6.months','No.of.trades.opened.in.last.12.months'
+                ,'No.of.PL.trades.opened.in.last.6.months','No.of.PL.trades.opened.in.last.6.months'
+                ,'No.of.Inquiries.in.last.6.months..excluding.home...auto.loans.'
+                ,'No.of.Inquiries.in.last.12.months..excluding.home...auto.loans.'
+                ,'No.of.PL.trades.opened.in.last.12.months','Presence.of.open.home.loan','Presence.of.open.auto.loan')
+```
+
+
+f) Explore data by Univariate and Multivariate Analysis
+
+# Univariate analysis
+
+# Frequency and Performance.Tag
+```{r, echo =FALSE}
+out_df<-data.frame(prop.table(table(data_for_eda$Performance.Tag)*100))
+ggplot(out_df,aes(x= reorder(Var1,-Freq),Freq))+geom_bar(stat ="identity",col='blue', fill ="pink")+ xlab("Performance.Tag") + ylab("Frequency") 
+
+
+```
+# Frequency and Gender
+
+```{r, echo =FALSE}
+out_df<-data.frame(prop.table(table(data_for_eda$Gender)*100))
+ggplot(out_df,aes(x= reorder(Var1,-Freq),Freq))+geom_bar(stat ="identity", fill= "pink")+ xlab("Gender") + ylab("Frequency") 
+```
+# Frequency and Education
+
+```{r}
+out_df<-data.frame(prop.table(table(data_for_eda$Education)*100))
+ggplot(out_df,aes(x= reorder(Var1,-Freq),Freq))+geom_bar(stat ="identity", fill ="pink")+ xlab("Education") + ylab("Frequency") 
+```
+# Frequency and Profession
+
+```{r}
+out_df<-data.frame(prop.table(table(data_for_eda$Profession)*100))
+ggplot(out_df,aes(x= reorder(Var1,-Freq),Freq))+geom_bar(stat ="identity", fill="blue")+ xlab("Profession") + ylab("Frequency") 
+```
+# Frequency and Marital status
+
+```{r, echo= FALSE}
+out_df<-data.frame(prop.table(table(data_for_eda$Marital.Status..at.the.time.of.application.)*100))
+ggplot(out_df,aes(x= reorder(Var1,-Freq),Freq))+geom_bar(stat ="identity", fill= "blue")+ xlab("Marital.Status") + ylab("Frequency") 
+```
+# Frequency and Type of residence
+
+```{r}
+out_df<-data.frame(prop.table(table(data_for_eda$Type.of.residence)*100))
+ggplot(out_df,aes(x= reorder(Var1,-Freq),Freq))+geom_bar(stat ="identity", fill= "red")+ xlab("Type.of.residence") + ylab("Frequency")
+```
+# age range
+
+```{r, echo=FALSE}
+ggplot(data_for_eda,aes(Age))+geom_histogram(fill= "red")
+boxplot(data_for_eda$Age,horizontal = T) 
+```
+
+Most users are in late 30 to early 50 age range.
+Some outliers(very small age value, may be invalid) values are present.
+
+# Income range
+
+```{r, echo =FALSE}
+hist(data_for_eda$Income, xlab = "Income")
+boxplot(data_for_eda$Income,horizontal = T)
+```
+
+Most users are in 15 to 40 income range.
+Not many outliers found.
+
+```{r, echo =FALSE}
+ggplot(data_for_eda[which(data_for_eda$Performance.Tag == 1),] , aes(x = Income)) +
+  geom_density(color="red") 
+```
+# experience category
+ 
+```{r, echo=FALSE}
+hist(data_for_eda$No.of.months.in.current.company, xlab = "No.of.months.in.current.company")
+boxplot(data_for_eda$No.of.months.in.current.company,horizontal = T) 
+```
+
+Most users are new job holders with 0-5yr experience. 
+population size is low in high experience category.
+Some outliers do exist.
+
+```{r, echo =FALSE}
+summary(data_for_eda$No.of.times.90.DPD.or.worse.in.last.6.months)
+hist(data_for_eda$No.of.times.90.DPD.or.worse.in.last.6.months, xlab = "No.of.times.90.DPD.or.worse.in.last.6.months")
+boxplot(data_for_eda$No.of.times.90.DPD.or.worse.in.last.6.months,horizontal = T)
+```
+
+Most people have no such overdues. Among the very less people who have  90 days overdue, repeating offenders population size is very very small.
+
+
+```{r, echo =FALSE}
+
+summary(data_for_eda$No.of.times.60.DPD.or.worse.in.last.6.months)
+hist(data_for_eda$No.of.times.60.DPD.or.worse.in.last.6.months, xlab = "No.of.times.60.DPD.or.worse.in.last.6.months")
+boxplot(data_for_eda$No.of.times.60.DPD.or.worse.in.last.6.months,horizontal = T)
+```
+
+Most people have no such overdues, repeating offenders population size keep on decreasing with occurances of overdue.compared to 90 days overdues, population size is higher
+
+
+```{r, echo=FALSE}
+summary(data_for_eda$No.of.times.30.DPD.or.worse.in.last.6.months)
+hist(data_for_eda$No.of.times.30.DPD.or.worse.in.last.6.months, xlab = "No.of.times.30.DPD.or.worse.in.last.6.months")
+boxplot(data_for_eda$No.of.times.30.DPD.or.worse.in.last.6.months,horizontal = T)
+```
+
+Most people have no such overdues , repeating offenders population size keep on decreasing with occurances of overdue.
+
+```{r, echo=FALSE}
+summary(data_for_eda$No.of.times.90.DPD.or.worse.in.last.12.months)
+hist(data_for_eda$No.of.times.90.DPD.or.worse.in.last.12.months, xlab = "No.of.times.90.DPD.or.worse.in.last.12.months")
+boxplot(data_for_eda$No.of.times.90.DPD.or.worse.in.last.12.months,horizontal = T)
+```
+
+Most people have no such overdues.Among the very less people who have  90 days overdue, repeating offenders population size is very very small
+
+```{r, echo=FALSE}
+summary(data_for_eda$No.of.times.60.DPD.or.worse.in.last.12.months)
+hist(data_for_eda$No.of.times.60.DPD.or.worse.in.last.12.months, xlab = "No.of.times.60.DPD.or.worse.in.last.12.months")
+boxplot(data_for_eda$No.of.times.60.DPD.or.worse.in.last.12.months,horizontal = T)
+```
+
+Most people have no such overdues ,repeating offenders population size keep on decreasing with occurances of overdue.compared to 90 days overdues, population size is higher
+
+```{r, echo=FALSE}
+summary(data_for_eda$No.of.times.30.DPD.or.worse.in.last.12.months)
+hist(data_for_eda$No.of.times.30.DPD.or.worse.in.last.12.months, xlab = "No.of.times.30.DPD.or.worse.in.last.12.months")
+boxplot(data_for_eda$No.of.times.30.DPD.or.worse.in.last.12.months,horizontal = T)
+```
+
+Most people have no such overdues, repeating offenders population size keep on decreasing with occurances of overdue.
+
+```{r, echo=FALSE}
+summary(data_for_eda$Avgas.CC.Utilization.in.last.12.months)
+hist(data_for_eda$Avgas.CC.Utilization.in.last.12.months, xlab = "avg cc utilization")
+boxplot(data_for_eda$Avgas.CC.Utilization.in.last.12.months,horizontal = T)
+```
+
+Most users are utilizing only upto 20% of card upper limit, population size with proper 25 to 60 % card utilization is similar
+
+Left skewed .outliers do exist.
+
+```{r, echo=FALSE}
+ggplot(data_for_eda[which(data_for_eda$Performance.Tag == 1),] , aes(x = Avgas.CC.Utilization.in.last.12.months)) +
+  geom_density(color="blue")
+```
+
+```{r, echo=FALSE}
+summary(data_for_eda$No.of.trades.opened.in.last.6.months)
+hist(data_for_eda$No.of.trades.opened.in.last.6.months, xlab = "No.of.trades.opened.in.last.6.months")
+boxplot(data_for_eda$No.of.trades.opened.in.last.6.months,horizontal = T)
+```
+
+Most users have 0-4 trades opened in last 6 mon.
+Outlier do exist.
+
+```{r, echo=FALSE}
+summary(data_for_eda$No.of.trades.opened.in.last.12.months)
+hist(data_for_eda$No.of.trades.opened.in.last.12.months, xlab = "No.of.trades.opened.in.last.12.months")
+boxplot(data_for_eda$No.of.trades.opened.in.last.12.months,horizontal = T)
+```
+
+Most users have 0-10 trades opened in last 12 months.
+Outlier do exist.
+
+```{r, echo=FALSE}
+summary(data_for_eda$No.of.PL.trades.opened.in.last.6.months)
+hist(data_for_eda$No.of.PL.trades.opened.in.last.6.months, xlab = "No.of.PL.trades.opened.in.last.6.months")
+boxplot(data_for_eda$No.of.PL.trades.opened.in.last.6.months,horizontal = T)
+```
+
+Most users have 0-3 PL opened in last 12 months.
+Very few Outlier are there.
+
+```{r, echo=FALSE}
+summary(data_for_eda$No.of.PL.trades.opened.in.last.12.months)
+hist(data_for_eda$No.of.PL.trades.opened.in.last.12.months, xlab = "No.of.PL.trades.opened.in.last.12.months")
+boxplot(data_for_eda$No.of.PL.trades.opened.in.last.12.months,horizontal = T)
+```
+
+Most users have 0-6 trades opened in last 12 mon.
+Outlier might be there.
+
+```{r, echo=FALSE}
+summary(data_for_eda$No.of.Inquiries.in.last.6.months..excluding.home...auto.loans.)
+hist(data_for_eda$No.of.Inquiries.in.last.6.months..excluding.home...auto.loans.)
+boxplot(data_for_eda$No.of.Inquiries.in.last.6.months..excluding.home...auto.loans.,horizontal = T)
+```
+
+Most users have 0-4 trades opened in last 6 months.
+Outlier might be there.
+
+```{r, echo=FALSE}
+summary(data_for_eda$No.of.Inquiries.in.last.12.months..excluding.home...auto.loans.)
+hist(data_for_eda$No.of.Inquiries.in.last.12.months..excluding.home...auto.loans., xlab = "Autoloans-6mon")
+boxplot(data_for_eda$No.of.Inquiries.in.last.12.months..excluding.home...auto.loans.,horizontal = T)
+```
+
+Most users have 0-5 trades opened in last 12 months.
+Outlier are present.
+
+```{r, echo=FALSE}
+str(data_for_eda)
+
+summary(data_for_eda$Total.No.of.Trades)
+hist(data_for_eda$Total.No.of.Trades, xlab = "Total.No.of.Trades")
+boxplot(data_for_eda$Total.No.of.Trades,horizontal = T)
+```
+
+Most users have 0-10 trades in total.
+Outlier are there.
+
+```{r, echo=FALSE}
+summary(data_for_eda$Outstanding.Balance)
+hist(data_for_eda$Outstanding.Balance, xlab = "Outstanding.Balance")
+boxplot(data_for_eda$Outstanding.Balance,names = "Outstanding.Balance",horizontal = T)
+```
+
+0-200000 range higher no of users
+300k upwards lower no of users
+Most users are starting to repay their loans
+
+```{r, echo=FALSE}
+ggplot(data_for_eda[which(data_for_eda$Performance.Tag == 1),] , aes(x = Outstanding.Balance)) +
+  geom_density(color= "orange")
+
+```
+2) IV Analysis and WOE
+
+WOE: Predictive power for an independent variable is determined by the amount of evidence available.
+
+IV is a measure of the strength of the relationship between the two parties.
+
+Information Value	        Predictive Power
+< 0.02	                  useless for prediction
+0.02 to 0.1	              Weak predictor
+0.1 to 0.3	              Medium predictor
+0.3 to 0.5	              Strong predictor
+>0.5	                    Suspicious or too good to be true
+
+```{r, echo=FALSE}
+library(Information)
+
+IV <- create_infotables(data=data_for_eda, y="Performance.Tag", bins=10, parallel=T)
+
+IV$Tables$Age
+
+head(IV)
+ 
+IV_Value = data.frame(IV$Summary)
+
+grid.table(IV$Summary[seq(from=1,to=20,by=1),], rows=NULL)
+ 
+plotFrame <- IV$Summary[order(-IV$Summary$IV), ]
+plotFrame$Variable <- factor(plotFrame$Variable, levels = plotFrame$Variable[order(-plotFrame$IV)])
+ggplot(plotFrame, aes(x = Variable, y = IV)) +
+  geom_bar(width = .35, stat = "identity", color = "red", fill = "yellow") +
+  ggtitle("WOE:Important variable based on Information Value") +
+  theme_bw() +
+  theme(plot.title = element_text(size = 10)) +
+  theme(axis.text.x = element_text(angle = 90))
+
+plotFrame
+```
+
+From above WOE analysis below parameters show relatively higher significance
+Variable                                             IV
+Avgas.CC.Utilization.in.last.12.months             2.993909e-01
+No.of.trades.opened.in.last.12.months              2.979855e-01
+No.of.PL.trades.opened.in.last.12.months           2.959382e-01
+No.of.Inquiries.in.last.12.months..excluding.home...auto.loans. 2.953999e-01
+Outstanding.Balance                                2.427715e-01
+No.of.times.30.DPD.or.worse.in.last.6.months       2.415777e-01
+Total.No.of.Trades                                 2.366340e-01
+No.of.PL.trades.opened.in.last.6.months            2.197726e-01
+No.of.times.90.DPD.or.worse.in.last.12.months      2.139246e-01
+No.of.times.60.DPD.or.worse.in.last.6.months       2.058494e-01
+No.of.Inquiries.in.last.6.months..excluding.home...auto.loans. 2.051641e-01
+No.of.times.30.DPD.or.worse.in.last.12.months      1.982677e-01
+No.of.trades.opened.in.last.6.months               1.860467e-01
+No.of.times.60.DPD.or.worse.in.last.12.months      1.855141e-01
+No.of.times.90.DPD.or.worse.in.last.6.months       1.601541e-01
+No.of.months.in.current.residence                  7.896308e-02
+Income                                             4.236710e-02
+No.of.months.in.current.company                    2.176502e-02
+Presence.of.open.home.loan                         1.695583e-02
+
+# Correlation analysis
+
+```{r, echo =FALSE}
+library(corrplot)
+
+cor_df<- data_for_eda[,numeric_cols]
+
+corr_index<- cor(cor_df) 
+ 
+corrplot(corr_index, type = "upper", tl.pos = "td",
+         method = "circle", tl.cex = 0.01, tl.col = 'black',
+         order = "hclust", diag = FALSE)
+
+colnames(cor_df)
+```
+
+b) Bi/multi-variate analysis
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+ggplot(data_for_eda, aes(x = Avgas.CC.Utilization.in.last.12.months, y = No.of.PL.trades.opened.in.last.12.months, group=Performance.Tag, color=Performance.Tag))+
+  geom_line(stat='summary', fun.y='mean') +  
+  geom_point(stat='summary', fun.y='mean')
+```
+
+No of PL-trades opened is relatively higher for default users.
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+ggplot(data=data_for_eda, aes(x=No.of.times.90.DPD.or.worse.in.last.6.months, y=Avgas.CC.Utilization.in.last.12.months, group=Performance.Tag, color=Performance.Tag))+ 
+  geom_line(stat='summary', fun.y='mean') + 
+  geom_point(stat='summary', fun.y='mean')
+```
+
+ For default users Avg-CC-utilization is overall higher , Also CC-usage is going high with increasing DPD values.
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+ggplot(data=data_for_eda, aes(x=Total.No.of.Trades, y=Outstanding.Balance, group=Performance.Tag, color=Performance.Tag))+ 
+  geom_line(stat='summary', fun.y='mean') + 
+  geom_point(stat='summary', fun.y='mean')
+```
+
+Total no of trades is overall in higher nos for default users. 
+Also outstanding balance is relatively higher for most of default users.
+
+```{r, message=FALSE, echo=FALSE}
+ggplot(data=data_for_eda, aes(x=Income, y=Outstanding.Balance, group=Performance.Tag, color=Performance.Tag))+ 
+  geom_line(stat='summary', fun.y='mean')  
+```
+
+For defaulters Outstanding balance is higher.
+No upward/downward trend for outstanding balance with increasing income.
+If outstanding is more than 12.5lakh its a matter of concern.
+
+
+```{r, message=FALSE, echo=FALSE}
+ggplot(data_for_eda, aes(x = Income, y = Avgas.CC.Utilization.in.last.12.months, group=Performance.Tag, color=Performance.Tag))+
+  geom_line(stat='summary', fun.y='mean') +  
+  geom_point(stat='summary', fun.y='mean')
+```
+
+With increasing income avg-cc-usage decreases for whole population.
+If avg cc usage is >40 for a low income, >30 for middle income, >25 for higher income,they should be looked.
+
+```{r, message=FALSE, echo=FALSE}
+ggplot(data=data_for_eda, aes(x=Income, y=No.of.times.90.DPD.or.worse.in.last.6.months, group=Performance.Tag, color=Performance.Tag))+ 
+  geom_line(stat='summary', fun.y='mean') + 
+  geom_point(stat='summary', fun.y='mean') 
+```
+
+With increasing Income, DPD nos are decreasing. 
+Also for defaulting users DPD nos are way higher.
+High no of defaulters are in lower to medium income range. 
+
+```{r, message=FALSE, echo=FALSE}
+ggplot(data=data_for_eda, aes(x=Income, y=No.of.Inquiries.in.last.12.months..excluding.home...auto.loans., group=Performance.Tag, color=Performance.Tag))+ 
+  geom_line(stat='summary', fun.y='mean') + 
+  geom_point(stat='summary', fun.y='mean') 
+```
+
+With increase in income no of inquiries are decreasing for non defaulters.
+With increase in income no of inquiries relatively higher for defaulters.
+
+```{r,message=FALSE, echo=FALSE}
+ggplot(data=data_for_eda, aes(x=No.of.dependents, y=Income, group=Performance.Tag, color=Performance.Tag))+ 
+  geom_line(stat='summary', fun.y='mean') + 
+  geom_point(stat='summary', fun.y='mean') 
+```
+
+Income per no of dependants is very low for defaulters compared to non-defaulters. 
+
+```{r, warning=FALSE,echo=FALSE, message=FALSE}
+ggplot(data=data_for_eda, aes(x=No.of.Inquiries.in.last.12.months..excluding.home...auto.loans., y=Total.No.of.Trades , group=Performance.Tag, color=Performance.Tag))+ 
+  geom_line(stat='summary', fun.y='mean') + 
+  geom_point(stat='summary', fun.y='mean')
+```
+
+With increasing no of inquiries in last 12months,total no of trades increases, then gradually it becomes constant.For default users total no of trades is higher.
+
+# Scaling numeric columns & creating dummies for factor attributes
+
+
+```{r}
+table(data_for_eda$Performance.Tag)
+prop.table(table(data_for_eda$Performance.Tag))
+```
+
+Only 4.2% of observations are under default category. 
+So it is a highly imbalanced data which would result  in-effictive models if not treated properly.
+
+# Data before scaling 
+
+```{r}
+table(data_for_eda$Performance.Tag)
+```
+
+# Create a copy to be used during Random forest processing.
+```{r, echo=FALSE}
+master_df<- data_for_eda
+
+data_for_scaling<-data.frame(sapply(data_for_eda[numeric_cols], scale))
+
+str(data_for_scaling)
+
+data_for_creating_dummies <- data_for_eda[fact_cols] 
+
+str(data_for_creating_dummies)
+```
+
+# Create dummy variables for factor attributes
+
+```{r}
+dummies<- data.frame(sapply(data_for_creating_dummies,function(x) data.frame(model.matrix(~x-1,data =data_for_creating_dummies))[,-1])) 
+```
+
+# Combine all relevant columns to build final training data
+
+```{r, echo=FALSE}
+final_df<- cbind(data_for_eda[event_col],data_for_scaling,dummies)
+
+final_df$Performance.Tag<-as.factor(final_df$Performance.Tag)
+
+str(final_df)
+```
+
+ Above "final_df" dataset would be used for Logistic and SVM modelling both.
+ 
+ 
+ 3) Model Building
+ 
+Before going to apply synthetic sampling only on training data.We need to devide the main data to train and test data and then apply sampling on the training data only.Otherwise there is a risk of - having unreal synthetic data in the test dataset.
+
+
+
+ a) Split data into train and test 
+
+# Splitting whole date to separate test data for model evaluation
+
+```{r, echo=FALSE}
+set.seed(100)
+
+split_indices <- sample.split(final_df, SplitRatio = 7/10)
+
+data_for_sampling <- final_df[split_indices, ]
+ 
+test<- final_df[!split_indices, ]
+```
+
+# Generate data synthetically to avoid errors related to explicitely mentioned probability
+
+```{r, message=FALSE, warning=FALSE, echo=FALSE}
+library(ROSE)
+
+train <- ROSE(Performance.Tag ~ ., data = data_for_sampling, seed = 1)$data
+
+table(train$Performance.Tag)
+```
+
+
+# Model 1: Build Models using Logistic Regression
+
+```{r}
+logistic_1 <- glm(Performance.Tag ~ ., family = "binomial", data = train)
+
+summary(logistic_1)
+```
+
+# Using stepwise algorithm for removing insignificant variables
+
+```{r}
+logistic_2 <- stepAIC(logistic_1, direction = "both")
+```
+
+```{r}
+logistic_3<- glm(Performance.Tag ~ Income + No.of.months.in.current.residence + 
+                   No.of.months.in.current.company + Avgas.CC.Utilization.in.last.12.months + 
+                   No.of.times.90.DPD.or.worse.in.last.6.months + No.of.times.60.DPD.or.worse.in.last.6.months + 
+                   No.of.times.30.DPD.or.worse.in.last.6.months + No.of.times.90.DPD.or.worse.in.last.12.months + 
+                   No.of.times.60.DPD.or.worse.in.last.12.months + No.of.times.30.DPD.or.worse.in.last.12.months + 
+                   No.of.trades.opened.in.last.6.months + No.of.PL.trades.opened.in.last.6.months + 
+                   No.of.PL.trades.opened.in.last.6.months.1 + No.of.Inquiries.in.last.12.months..excluding.home...auto.loans. + 
+                   No.of.PL.trades.opened.in.last.12.months + Presence.of.open.home.loan + 
+                   Presence.of.open.auto.loan + Marital.Status..at.the.time.of.application..xMarried + 
+                   Education.xOthers + Profession.xSE + Type.of.residence.xCompany.provided + 
+                   Type.of.residence.xOwned
+                 , family = "binomial", data = train)
+
+summary(logistic_3)
+
+vif(logistic_3)
+
+```
+
+Removing  due to high vif value  - No.of.PL.trades.opened.in.last.6.months.1 
+
+```{r}
+logistic_4<- glm(Performance.Tag ~ Income + No.of.months.in.current.residence + 
+                   No.of.months.in.current.company + Avgas.CC.Utilization.in.last.12.months + 
+                   No.of.times.90.DPD.or.worse.in.last.6.months + No.of.times.60.DPD.or.worse.in.last.6.months + 
+                   No.of.times.30.DPD.or.worse.in.last.6.months + No.of.times.90.DPD.or.worse.in.last.12.months + 
+                   No.of.times.60.DPD.or.worse.in.last.12.months + No.of.times.30.DPD.or.worse.in.last.12.months + 
+                   No.of.trades.opened.in.last.6.months + No.of.PL.trades.opened.in.last.6.months + 
+                   No.of.Inquiries.in.last.12.months..excluding.home...auto.loans. + 
+                   No.of.PL.trades.opened.in.last.12.months + Presence.of.open.home.loan + 
+                   Presence.of.open.auto.loan + Marital.Status..at.the.time.of.application..xMarried + 
+                   Education.xOthers + Profession.xSE + Type.of.residence.xCompany.provided + 
+                   Type.of.residence.xOwned
+                 , family = "binomial", data = train)
+
+summary(logistic_4)
+
+```
+
+Removing  due to high value , relatively lower significance -   No.of.times.60.DPD.or.worse.in.last.6.months 
+
+```{r}
+logistic_5<- glm(Performance.Tag ~ Income + No.of.months.in.current.residence + 
+                   No.of.months.in.current.company + Avgas.CC.Utilization.in.last.12.months + 
+                   No.of.times.90.DPD.or.worse.in.last.6.months  + 
+                   No.of.times.30.DPD.or.worse.in.last.6.months + No.of.times.90.DPD.or.worse.in.last.12.months + 
+                   No.of.times.60.DPD.or.worse.in.last.12.months + No.of.times.30.DPD.or.worse.in.last.12.months + 
+                   No.of.trades.opened.in.last.6.months + No.of.PL.trades.opened.in.last.6.months + 
+                   No.of.Inquiries.in.last.12.months..excluding.home...auto.loans. + 
+                   No.of.PL.trades.opened.in.last.12.months + Presence.of.open.home.loan + 
+                   Presence.of.open.auto.loan + Marital.Status..at.the.time.of.application..xMarried + 
+                   Education.xOthers + Profession.xSE + Type.of.residence.xCompany.provided + 
+                   Type.of.residence.xOwned
+                 , family = "binomial", data = train)
+
+summary(logistic_5)
+
+
+```
+
+```{r}
+logistic_6<-  glm(Performance.Tag ~ Income + No.of.months.in.current.residence + 
+                    No.of.months.in.current.company + Avgas.CC.Utilization.in.last.12.months + 
+                    No.of.times.90.DPD.or.worse.in.last.6.months  + 
+                    No.of.times.30.DPD.or.worse.in.last.6.months + No.of.times.90.DPD.or.worse.in.last.12.months + 
+                    No.of.times.60.DPD.or.worse.in.last.12.months + No.of.times.30.DPD.or.worse.in.last.12.months + 
+                    No.of.trades.opened.in.last.6.months + No.of.PL.trades.opened.in.last.6.months + 
+                    No.of.Inquiries.in.last.12.months..excluding.home...auto.loans. + 
+                    No.of.PL.trades.opened.in.last.12.months + Presence.of.open.home.loan + 
+                    Presence.of.open.auto.loan + Marital.Status..at.the.time.of.application..xMarried + 
+                    Education.xOthers + Profession.xSE + 
+                    Type.of.residence.xOwned
+                  , family = "binomial", data = train)
+
+summary(logistic_6)
+```
+
+
+# Removing No.of.months.in.current.residence
+
+```{r}
+logistic_7 <- glm(Performance.Tag ~ Income  + 
+                    No.of.months.in.current.company + Avgas.CC.Utilization.in.last.12.months + 
+                    No.of.times.90.DPD.or.worse.in.last.6.months  + 
+                    No.of.times.30.DPD.or.worse.in.last.6.months + No.of.times.90.DPD.or.worse.in.last.12.months + 
+                    No.of.times.60.DPD.or.worse.in.last.12.months + No.of.times.30.DPD.or.worse.in.last.12.months + 
+                    No.of.trades.opened.in.last.6.months + No.of.PL.trades.opened.in.last.6.months + 
+                    No.of.Inquiries.in.last.12.months..excluding.home...auto.loans. + 
+                    No.of.PL.trades.opened.in.last.12.months + Presence.of.open.home.loan + 
+                    Presence.of.open.auto.loan + Marital.Status..at.the.time.of.application..xMarried + 
+                    Education.xOthers + Profession.xSE + 
+                    Type.of.residence.xOwned
+                  , family = "binomial", data = train)
+
+summary(logistic_7)
+
+```
+
+# removing  Presence.of.open.home.loan
+
+```{r}
+logistic_8<-glm(Performance.Tag ~ Income  + 
+                   No.of.months.in.current.company + Avgas.CC.Utilization.in.last.12.months + 
+                   No.of.times.90.DPD.or.worse.in.last.6.months  + 
+                   No.of.times.30.DPD.or.worse.in.last.6.months + No.of.times.90.DPD.or.worse.in.last.12.months + 
+                   No.of.times.60.DPD.or.worse.in.last.12.months + No.of.times.30.DPD.or.worse.in.last.12.months + 
+                   No.of.trades.opened.in.last.6.months + No.of.PL.trades.opened.in.last.6.months + 
+                   No.of.Inquiries.in.last.12.months..excluding.home...auto.loans. + 
+                   No.of.PL.trades.opened.in.last.12.months  + 
+                   Presence.of.open.auto.loan + Marital.Status..at.the.time.of.application..xMarried + 
+                   Education.xOthers + Profession.xSE + 
+                   Type.of.residence.xOwned
+                 , family = "binomial", data = train)
+
+summary(logistic_8)
+```
+
+# Removing Marital.Status..at.the.time.of.application..xMarried 
+
+```{r}
+logistic_9<- glm(Performance.Tag ~ Income  + 
+                   No.of.months.in.current.company + Avgas.CC.Utilization.in.last.12.months + 
+                   No.of.times.90.DPD.or.worse.in.last.6.months  + 
+                   No.of.times.30.DPD.or.worse.in.last.6.months + No.of.times.90.DPD.or.worse.in.last.12.months + 
+                   No.of.times.60.DPD.or.worse.in.last.12.months + No.of.times.30.DPD.or.worse.in.last.12.months + 
+                   No.of.trades.opened.in.last.6.months + No.of.PL.trades.opened.in.last.6.months + 
+                   No.of.Inquiries.in.last.12.months..excluding.home...auto.loans. + 
+                   No.of.PL.trades.opened.in.last.12.months  + 
+                   Presence.of.open.auto.loan  + 
+                   Education.xOthers + Profession.xSE + 
+                   Type.of.residence.xOwned
+                 , family = "binomial", data = train)
+
+summary(logistic_9)
+```
+
+# Removing Profession.xSE
+
+```{r}
+logistic_10<-glm(Performance.Tag ~ Income  + 
+                   No.of.months.in.current.company + Avgas.CC.Utilization.in.last.12.months + 
+                   No.of.times.90.DPD.or.worse.in.last.6.months  + 
+                   No.of.times.30.DPD.or.worse.in.last.6.months + No.of.times.90.DPD.or.worse.in.last.12.months + 
+                   No.of.times.60.DPD.or.worse.in.last.12.months + No.of.times.30.DPD.or.worse.in.last.12.months + 
+                   No.of.trades.opened.in.last.6.months + No.of.PL.trades.opened.in.last.6.months + 
+                   No.of.Inquiries.in.last.12.months..excluding.home...auto.loans. + 
+                   No.of.PL.trades.opened.in.last.12.months  + 
+                   Presence.of.open.auto.loan  + 
+                   Education.xOthers + 
+                   Type.of.residence.xOwned
+                 , family = "binomial", data = train)
+
+summary(logistic_10)
+```
+
+# removing Type.of.residence.xOwned
+
+```{r}
+logistic_11<-glm(Performance.Tag ~ Income  + 
+                   No.of.months.in.current.company + Avgas.CC.Utilization.in.last.12.months + 
+                   No.of.times.90.DPD.or.worse.in.last.6.months  + 
+                   No.of.times.30.DPD.or.worse.in.last.6.months + No.of.times.90.DPD.or.worse.in.last.12.months + 
+                   No.of.times.60.DPD.or.worse.in.last.12.months + No.of.times.30.DPD.or.worse.in.last.12.months + 
+                   No.of.trades.opened.in.last.6.months + No.of.PL.trades.opened.in.last.6.months + 
+                   No.of.Inquiries.in.last.12.months..excluding.home...auto.loans. + 
+                   No.of.PL.trades.opened.in.last.12.months  + 
+                   Presence.of.open.auto.loan  + 
+                   Education.xOthers 
+                 , family = "binomial", data = train)
+
+summary(logistic_11)
+```
+
+# removing Presence.of.open.auto.loan 
+
+```{r}
+logistic_12<-glm(Performance.Tag ~ Income   + Avgas.CC.Utilization.in.last.12.months + 
+                   No.of.times.90.DPD.or.worse.in.last.6.months  + 
+                   No.of.times.30.DPD.or.worse.in.last.6.months + No.of.times.90.DPD.or.worse.in.last.12.months + 
+                   No.of.times.60.DPD.or.worse.in.last.12.months + No.of.times.30.DPD.or.worse.in.last.12.months + 
+                   No.of.trades.opened.in.last.6.months + No.of.PL.trades.opened.in.last.6.months + 
+                   No.of.Inquiries.in.last.12.months..excluding.home...auto.loans. + 
+                   No.of.PL.trades.opened.in.last.12.months  +Education.xOthers 
+                 , family = "binomial", data = train)
+
+summary(logistic_12)
+
+```
+
+# removing Education.xOthers 
+
+```{r}
+logistic_13<-glm(Performance.Tag ~ Income   + Avgas.CC.Utilization.in.last.12.months + 
+                   No.of.times.90.DPD.or.worse.in.last.6.months  + 
+                   No.of.times.30.DPD.or.worse.in.last.6.months + No.of.times.90.DPD.or.worse.in.last.12.months + 
+                   No.of.times.60.DPD.or.worse.in.last.12.months + No.of.times.30.DPD.or.worse.in.last.12.months + 
+                   No.of.trades.opened.in.last.6.months + No.of.PL.trades.opened.in.last.6.months + 
+                   No.of.Inquiries.in.last.12.months..excluding.home...auto.loans. + 
+                   No.of.PL.trades.opened.in.last.12.months
+                 , family = "binomial", data = train)
+
+summary(logistic_13)
+```
+
+#removing No.of.trades.opened.in.last.6.months 
+
+```{r}
+logistic_14<-glm(Performance.Tag ~ Income   + Avgas.CC.Utilization.in.last.12.months + 
+                   No.of.times.90.DPD.or.worse.in.last.6.months  + 
+                   No.of.times.30.DPD.or.worse.in.last.6.months + No.of.times.90.DPD.or.worse.in.last.12.months + 
+                   No.of.times.60.DPD.or.worse.in.last.12.months + No.of.times.30.DPD.or.worse.in.last.12.months + 
+                   No.of.PL.trades.opened.in.last.6.months + 
+                   No.of.Inquiries.in.last.12.months..excluding.home...auto.loans. + 
+                   No.of.PL.trades.opened.in.last.12.months
+                 , family = "binomial", data = train)
+
+summary(logistic_14)
+```
+
+Significance is very high now for existing attributes.Lets take this model as final LR model for now.
+
+# Consider Final LR model as logistic model
+
+```{r}
+final_lr_model <- logistic_14
+```
+
+# Model Evaluation with Test Data 
+
+```{r}
+test_pred = predict(final_lr_model, type = "response", newdata = test[,-1])
+```
+
+# Use the probability cutoff of 50%.
+
+```{r}
+test_pred_default <- as.factor(ifelse(test_pred >= 0.50, 1,0))
+test_actual_default <-  as.factor(ifelse(test$Performance.Tag==1,1,0))
+
+conf_mtr_50_cutoff <- confusionMatrix(test_pred_default, test_actual_default)
+
+conf_mtr_50_cutoff 
+```
+
+# Find out the optimal probalility cutoff 
+
+```{r, warning=FALSE,message=FALSE}
+perform_fn <- function(cutoff) 
+{
+  predicted_default <- as.factor(ifelse(test_pred >= cutoff, 1,0))
+  conf <- confusionMatrix(predicted_default, test_actual_default)
+  acc <- conf$overall[1]
+  sens <- conf$byClass[1]
+  spec <- conf$byClass[2]
+  out <- t(as.matrix(c(sens, spec, acc))) 
+  colnames(out) <- c("sensitivity", "specificity", "accuracy")
+  return(out)
+}
+
+s = seq(.01,.95,length=100)
+OUT = matrix(0,100,3)
+for(i in 1:100)
+{
+  OUT[i,] = perform_fn(s[i])
+} 
+
+ 
+plot(s, OUT[,1],xlab="Cutoff",ylab="Value",cex.lab=1.5,cex.axis=1.5,ylim=c(0,1),type="l",lwd=2,axes=FALSE,col=2)
+grid(50, lwd = 2)
+axis(1,seq(0,1,length=5),seq(0,1,length=5),cex.lab=1.5)
+axis(2,seq(0,1,length=5),seq(0,1,length=5),cex.lab=1.5)
+lines(s,OUT[,2],col="orange",lwd=2)
+lines(s,OUT[,3],col= "darkgreen",lwd=2)
+box()
+legend("bottomright", legend=c("Sensitivity","Specificity","Accuracy"),
+       col=c(2,"orange",4,"darkred"), cex=0.5,lwd=c(3,3,3,3), text.font=14,y.intersp = 0.3)
+
+test_pred_optimal<- as.factor(ifelse(test_pred >= 0.502, 1,0))
+optimal_conf <- confusionMatrix(test_pred_optimal, test_actual_default)
+optimal_conf
+
+```
+
+for 50 % optimal threshold,  
+accuracy = 59.85% , 
+specificity = 63.69% , 
+sensitivity = 59.67%
+So cutoff value is 0.502 for final model
+
+# Model 2: Linear SVM
+
+SVM needs all numeric attribubtes so reusing the SMOTE balanced train dataset.
+
+
+```{r}
+library(plyr)
+library(caret)
+library(kernlab)
+library(readr)
+library(caret)
+library(caTools)
+
+```
+
+```{r}
+train_svm <-train
+test_svm<-test
+
+nrow(train_svm)
+table(train_svm$Performance.Tag)
+str(train_svm)
+nrow(test_svm)
+table(test_svm$Performance.Tag)
+str(test_svm)
+```
+
+A lot of time for modeling on the  whole train data, So we are taking 10% sample of the data and building the model which would make the computation faster.
+
+```{r}
+train.indices = sample(2:nrow(train_svm), 0.1*nrow(train_svm))
+train_svm = train_svm[train.indices, ]
+```
+
+# Model Building
+
+* Linear model - SVM  at Cost(C) = 1
+
+```{r, echo=FALSE}
+model_1 <- ksvm(Performance.Tag ~ ., data = train_svm,scale = TRUE,C=1)
+linear_prediction<- predict(model_1, test_svm)
+confusionMatrix(linear_prediction, test_svm$Performance.Tag)
+```
+
+* Linear model - SVM  at Cost(C) = 10
+
+```{r, echo=FALSE}
+model_2 <- ksvm(Performance.Tag ~ ., data = train_svm,scale = TRUE,C=10)
+linear_prediction<- predict(model_2, test_svm)
+confusionMatrix(linear_prediction, test_svm$Performance.Tag)
+```
+
+Improve in Sensitivity and accuracy but drop in  Specificity when we change C=1 and C=10
+
+
+* Using Linear Kernel
+
+```{r, echo=FALSE}
+Model_linear <- ksvm(Performance.Tag~ ., data = train_svm, scale = FALSE, kernel = "vanilladot")
+Eval_linear<- predict(Model_linear, test_svm)
+```
+
+#confusion matrix - Linear Kernel
+
+```{r, echo=FALSE}
+confusionMatrix(Eval_linear,test_svm$Performance.Tag)
+```
+
+* Hyperparameter tuning and Cross Validation
+
+```{r}
+trainControl <- trainControl(method="cv", number=5)
+```
+
+```{r}
+metric <- "Accuracy"
+```
+
+```{r}
+grid <- expand.grid(C=seq(1, 5, by=1))
+summary(grid)
+```
+
+
+*Using Polynomial Kernel: degree=2
+
+```{r}
+Model_poly <- ksvm(Performance.Tag~ ., data = train_svm, scale = FALSE, kernel = "polydot",kpar=list(degree=2))
+```
+
+# Predicting the model results 
+
+```{r}
+Eval_Poly<- predict(Model_poly, test_svm)
+```
+#confusion matrix 
+
+```{r}
+confusionMatrix(Eval_Poly,test_svm$Performance.Tag)
+```
+
+The specificity looks really low.
+
+
+* Using RBF Kernel
+
+```{r, echo=FALSE}
+Model_RBF <- ksvm(Performance.Tag~ ., data = train_svm, scale = FALSE, kernel = "rbfdot")
+RBF_linear<- predict(Model_RBF, test_svm)
+```
+
+#confusion matrix - RBF Kernel
+
+```{r}
+confusionMatrix(RBF_linear,test_svm$Performance.Tag)
+```
+
+# Conclusion from SVM
+After performing five fold cross validation we came to the conclusion that Polynomial kernel performs the best in terms of accuracy but its specificity is too bad
+Linear kernel accuracy: ~56.50 %
+RBF kernel accuracy: ~ 72.19%
+Polynomial accuracy: ~ 93.83%
+Accuracy = 93.83% is the best accuracy so far amongst all the models
+
+The model gives the best accuracy in case of Polynomial accuracy during cross validation. The final values used for the model are sigma = 0.1 and C = 2.
+Though it's hard to conclude anything from svm model as the the accuracy ,specificity and sensitivity are not consistent.As we are doing this modelling on a small dataset so we are not considering it our chosen model.
+
+
+* Model 3:random Forest 
+
+# Spliting the bank data in 70:30 ratio
+
+```{r}
+library(rpart)
+library(rpart.plot)
+library(kernlab)
+library(readr)
+```
+
+
+```{r, echo=FALSE}
+set.seed(101)
+master_df$Performance.Tag <- as.factor(ifelse(master_df$Performance.Tag==0,"no","yes"))
+
+split_indices <- sample.split(master_df$Performance.Tag, SplitRatio = 0.70)
+train_rf <- master_df[split_indices, ]
+test_rf <- master_df[!split_indices, ]
+nrow(train_rf)/nrow(master_df)
+nrow(test_rf)/nrow(master_df)
+
+train_rf<-train
+test_rf<- test
+train_rf$Performance.Tag<- as.factor(ifelse(train_rf$Performance.Tag==0,"no","yes"))
+test_rf$Performance.Tag<- as.factor(ifelse(test_rf$Performance.Tag==0,"no","yes"))
+
+
+table(train_rf$Performance.Tag)
+```
+#check classes distribution
+
+```{r}
+prop.table(table(train_rf$Performance.Tag))
+```
+
+
+```{r}
+
+rf_synthetic <- randomForest(Performance.Tag ~., 
+                             data = train_rf, 
+                             proximity = F, 
+                             do.trace = T, 
+                             mtry = 5,
+                             ntree=1000)
+summary(rf_synthetic)
+```
+
+# make predictions on the test set
+
+```{r}
+tree.predict <- predict(rf_synthetic, test_rf, type = "class")
+```
+
+# evaluate the results
+
+```{r}
+confusionMatrix(tree.predict, test_rf$Performance.Tag, positive = "yes")
+```
+
+#In terms of probbability
+
+```{r}
+rf_pred_synthetic <- predict(rf_synthetic, test_rf, type = "prob")
+```
+
+Let's find out the optimal cutoff value for probalility with synthetic data
+
+#Cutoff for randomforest to assign yes or no
+
+```{r}
+perform_fn_rf <- function(cutoff) 
+{
+  predicted_response <- as.factor(ifelse(rf_pred_synthetic[, 2] >= cutoff, "yes", "no"))
+  conf <- confusionMatrix(predicted_response, test_rf$Performance.Tag, positive = "yes")
+  acc <- conf$overall[1]
+  sens <- conf$byClass[1]
+  spec <- conf$byClass[2]
+  OUT_rf <- t(as.matrix(c(sens, spec, acc))) 
+  colnames(OUT_rf) <- c("sensitivity", "specificity", "accuracy")
+  return(OUT_rf)
+}
+```
+
+# creating cutoff values from 0.01 to 0.99 
+
+```{r}
+s = seq(.01,.99,length=100)
+
+OUT_rf = matrix(0,100,3)
+```
+
+# calculate the sens, spec and acc for different cutoff values
+
+```{r, warning=FALSE, message=FALSE}
+for(i in 1:100)
+{
+  OUT_rf[i,] = perform_fn_rf(s[i])
+} 
+```
+
+# plotting cutoffs
+
+```{r}
+plot(s, OUT_rf[,1],xlab="Cutoff",ylab="Value",cex.lab=1.5,cex.axis=1.5,ylim=c(0,1),type="l",lwd=2,axes=FALSE,col=2)
+axis(1,seq(0,1,length=5),seq(0,1,length=5),cex.lab=1.5)
+axis(2,seq(0,1,length=5),seq(0,1,length=5),cex.lab=1.5)
+lines(s,OUT_rf[,2],col="orange",lwd=2)
+lines(s,OUT_rf[,3],col=4,lwd=2)
+box()
+legend(0,.50,col=c(1,"orange",2,"darkred"),lwd=c(1,1,1,1),c("Sensitivity","Specificity","Accuracy"))
+
+cutoff_rf <- s[which(abs(OUT_rf[,1]-OUT_rf[,2])<0.01)]
+cutoff_rf 
+```
+
+The plot shows that cutoff value of around 12.8% optimizes sensitivity and accuracy
+The cut off is too low.
+
+
+```{r}
+test_pred_optimal<- factor(ifelse(rf_pred_synthetic[, 2] >= 0.22, "yes", "no"))
+conf_rf <- confusionMatrix(test_pred_optimal, test_rf$Performance.Tag, positive = "yes")
+conf_rf
+```
+
+# KS - statistic -Random Forest - Test Data
+
+```{r, echo=FALSE}
+
+test_actual_default<-as.factor(ifelse(test_rf$Performance.Tag == "yes", 1,0))
+pred_object_test<- prediction(as.numeric(test_pred_optimal), as.numeric(test_actual_default))
+
+performance_measures_test<- performance(pred_object_test, "tpr", "fpr")
+
+ks_table_test <- attr(performance_measures_test, "y.values")[[1]] - 
+  (attr(performance_measures_test, "x.values")[[1]])
+
+max(ks_table_test)
+```
+
+KS-statistic is 23.37%
+
+#ROC Curve
+
+```{r}
+auc_ROCR <- performance(pred_object_test, measure = "auc")
+auc_ROCR <- auc_ROCR@y.values[[1]]
+auc_ROCR 
+```
+
+Area under curve is : 0.6168613
+
+
+
+```{r, echo=FALSE}
+pd <- data.frame(fpr=unlist(performance_measures_test@x.values), tpr=unlist(performance_measures_test@y.values))
+
+ggplot(pd ,aes(x=fpr, y=tpr)) +
+  geom_line(colour="blue") +
+  geom_line(data=data.frame(), aes(x=c(0,1), y=c(0,1)), colour="red") +
+  labs(x="False Positive Rate",
+       y="True Positive Rate",
+       title="ROC Curve for Random Forest",
+       caption="xgboost") +
+  theme(axis.text.x=element_text(hjust=1))+
+  annotate("text", x=0.4, y=0.00, hjust=0, vjust=0, size=5,
+           label=paste("AUC =", round(auc_ROCR, 3))) 
+
+gini<-(auc_ROCR*2)-1
+gini
+
+
+```
+
+```{r}
+library(dplyr)
+```
+
+
+```{r, echo=FALSE}
+lift <- function(labels , predicted_prob,groups=10) {
+  
+  if(is.factor(labels)) labels  <- as.integer(as.character(labels ))
+  if(is.factor(predicted_prob)) predicted_prob <- as.integer(as.character(predicted_prob))
+  helper = data.frame(cbind(labels , predicted_prob))
+  helper[,"bucket"] = ntile(-helper[,"predicted_prob"], groups)
+  gaintable = helper %>% group_by(bucket)  %>%
+    summarise_at(vars(labels ), funs(total = n(),
+                                     totalresp=sum(., na.rm = TRUE))) %>%
+    mutate(Cumresp = cumsum(totalresp),
+           Gain=Cumresp/sum(totalresp)*100,
+           Cumlift=Gain/(bucket*(100/groups))) 
+  return(gaintable)
+}
+
+lift_decile_info = lift(test_actual_default, test_pred, groups = 10)
+
+print(lift_decile_info)
+write.csv(lift_decile_info, "lift.csv", row.names = FALSE)
+```
+
+#Plotting Gain Chart
+
+```{r, echo=FALSE}
+ggplot(lift_decile_info, aes(x = bucket)) +
+  labs(x = "Decile", y="Gain (%)")+
+  geom_point(data=lift_decile_info,aes(x=bucket,y=Gain),color='red', group = 1,size=2,shape=21,stroke=2.5)+
+  geom_line(data=lift_decile_info,aes(x=bucket,y=Gain),color='darkgreen',size=1, group = 1)+
+  theme(panel.grid.minor = element_line(colour = "black", size = 0.5)) +
+  scale_x_continuous(breaks = seq(1, 10, 1))+
+  scale_y_continuous(breaks = seq(20, 100, 10),labels=function(x) paste0(x,"%"))+
+  ggtitle("Gain Chart")
+
+```
+#Plotting Lift Chart
+
+```{r, echo=FALSE}
+ggplot(lift_decile_info, aes(x = bucket)) +
+  labs(x = "Decile", y="Lift")+
+  geom_point(data=lift_decile_info,aes(x=bucket,y=Cumlift),color='red', group = 1,size=2,shape=21,stroke=2.5)+
+  geom_line(data=lift_decile_info,aes(x=bucket,y=Cumlift),color='darkgreen',size=1, group = 1)+
+  theme(panel.grid.minor = element_line(colour = "black", size = 0.5)) +
+  scale_x_continuous(breaks = seq(1, 10, 1))+
+  scale_y_continuous(breaks = seq(0.4, 4, 0.4))+
+  ggtitle("Lift Chart")
+```
+* 4) Model Evaluation
+
+# credit score generation process
+Build scorecard with the good to bad odds of 10 to 1 at a score of 400 doubling every 20 points. 
+
+```{r, echo=FALSE}
+str(final_df)
+final_df$perdict_default  <- predict(final_lr_model, type = "response", newdata = final_df[,-1])
+final_df$predict_NonDefault <- 1 - final_df$perdict_default
+final_df$odds <-  log(final_df$predict_NonDefault/final_df$perdict_default)
+
+Offset = 400
+PDO = 20
+log_odds=10
+Factor = PDO/log(2)
+Factor  
+
+final_df$Score = ceiling(Offset + (Factor*final_df$odds))
+
+str(final_df$Score)
+summary(final_df$Score)
+```
+
+# min - 337 to max - 423
+
+```{r}
+quantile(final_df$Score,seq(0,1,0.2))  
+```
+
+
+## From the plot it is evident that score cut off could be set to 419
+
+```{r, echo=FALSE}
+cutoff_score =419
+
+num_of_defaults_below_419<-length(which(final_df$Performance.Tag==1 & final_df$Score<419))
+total_no_of_defaults<-length(which(final_df$Performance.Tag==1))
+
+pc_defaults_covered_under_419<-ceiling((num_of_defaults_below_419/total_no_of_defaults)*100)
+
+pc_defaults_covered_under_419
+
+
+ggplot(final_df, aes(x = Score,color=Performance.Tag))+geom_bar(fill="pink")+geom_vline(aes(xintercept = cutoff_score))+labs(x="Score",y="Count",title="Score Distribution for all applicants")+annotate("text", x=350,y=4000, colour = "black",hjust=0, vjust=0, size=7,
+                                                                                                                                                                                              label=paste("Defaults covered by 419 cut off : " ,pc_defaults_covered_under_419,"%"))
+```
+
+# Predicting score for rejected applicants
+ 
+```{r, echo=FALSE}
+str(rejected_applicants)
+
+rejects_for_scaling<-rejected_applicants[numeric_cols]
+
+rejected_scaled_data<-data.frame(sapply(rejects_for_scaling, scale))
+str(rejected_scaled_data)
+
+rejects_for_dummies<-rejected_applicants[fact_cols]
+```
+
+# creating dummy variables for factor attributes
+
+```{r}
+rejected_dummies<- data.frame(sapply(rejects_for_dummies,function(x) data.frame(model.matrix(~x-1,data =rejects_for_dummies))[,-1])) 
+```
+
+# combine all relevant columns to build final training data
+
+```{r, echo=FALSE}
+rejected_final_df<- cbind(rejected_scaled_data,rejected_dummies)
+str(rejected_final_df)
+
+rejected_final_df$perdict_default  <- predict(final_lr_model, type = "response", newdata = rejected_final_df)
+rejected_final_df$predict_NonDefault <- 1 - rejected_final_df$perdict_default
+rejected_final_df$odds <-  log(rejected_final_df$predict_NonDefault/rejected_final_df$perdict_default)
+
+rejected_final_df$Score = ceiling(Offset + (Factor*rejected_final_df$odds))
+
+summary(rejected_final_df$Score)
+
+length(which(rejected_final_df$Score<419))/nrow(rejected_final_df)
+```
+
+## With our decided cutoff 419 we were able to identify 88.77% actual rejected applicants.
+
+```{r, echo=FALSE}
+cutoff_score= 419
+correct_rejections_by_scorecard="88.77%"
+length(which(rejected_final_df$Score<419))/nrow(rejected_final_df)
+```
+With cutoff 419 we were able to identify 88.77% actual rejected applicants.
+
+
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+ggplot(rejected_final_df, aes(x = Score)) +geom_bar(fill= "pink")+geom_vline(aes(xintercept = cutoff_score,col="pink"))+labs(x="Score",y="Count",title="Score Distribution of Actual Rejected applications")+annotate("text", x=380,y=1, colour = "blue",hjust=0, vjust=0, size=7,
+           label=paste("Correct rejections by score card% =", correct_rejections_by_scorecard))
+```
+
+
+# Approach_2 - Using scorecard package s
+
+Convert whole data to woe data and use scorecard package to get scores for each row
+
+```{r}
+library(woeBinning)
+library(scorecard)
+```
+
+# woe binning 
+
+```{r}
+bins = woebin(final_df, "Performance.Tag")
+dt_woe = woebin_ply(final_df, bins)
+```
+
+#modelling on woe dataframe
+
+```{r}
+m = glm(Performance.Tag ~ ., family = binomial(), data = dt_woe)
+
+
+```
+
+```{r}
+m_2 <- stepAIC(m, direction = "both")
+```
+
+
+```{r}
+m_3 <- glm(Performance.Tag ~ Age_woe + Income_woe + No.of.months.in.current.company_woe + 
+             Avgas.CC.Utilization.in.last.12.months_woe + No.of.times.90.DPD.or.worse.in.last.6.months_woe + 
+             No.of.times.30.DPD.or.worse.in.last.6.months_woe + No.of.times.90.DPD.or.worse.in.last.12.months_woe + 
+             No.of.times.30.DPD.or.worse.in.last.12.months_woe + No.of.trades.opened.in.last.12.months_woe + 
+             No.of.Inquiries.in.last.12.months..excluding.home...auto.loans._woe + 
+             Profession.xSE_woe
+           , family = "binomial", data = dt_woe)
+
+summary(m_3)
+```
+
+
+```{r}
+m_4 <- glm(Performance.Tag ~ Age_woe + Income_woe + No.of.months.in.current.company_woe + 
+             Avgas.CC.Utilization.in.last.12.months_woe  + 
+             No.of.times.90.DPD.or.worse.in.last.12.months_woe + 
+             No.of.times.30.DPD.or.worse.in.last.12.months_woe + No.of.trades.opened.in.last.12.months_woe + 
+             No.of.Inquiries.in.last.12.months..excluding.home...auto.loans._woe 
+           , family = "binomial", data = dt_woe)
+
+summary(m_4)
+
+vif(m_4)
+```
+
+# score 
+
+```{r}
+card = scorecard(bins, m_4,points0 = 400,odds0 = 1/9,pdo = 20)
+```
+
+# credit score for only total score
+
+```{r,warning=FALSE}
+library(scorecard)
+final_df$score = scorecard_ply (final_df, card)
+
+
+```
+
+
+
+```{r}
+summary(final_df$score)
+```
+min = 393 , max = 464
+
+
+
+
+# Financial analysis
+
+Without scorecard
+
+```{r, echo=FALSE}
+approval_rate <-(nrow(merged_df) -nrow(rejected_applicants))/nrow(merged_df) *100
+
+approval_rate
+```
+
+current approval rate : 98%
+
+#Net Credit loss(without scorecard)
+```{r, echo=FALSE}
+default_users_outstanding <- data_for_eda$Outstanding.Balance[which(data_for_eda$Performance.Tag==1)]
+
+current_credit_loss<- sum(default_users_outstanding)
+
+current_credit_loss
+```
+
+Current credit loss : 3711178158
+
+
+# With scorecard (Conservative cut -off)
+
+New credit loss
+```{r, echo=FALSE}
+default_users_ID <- master_data_backup$Application.ID [which(master_data_backup$Performance.Tag==1)]
+
+t1<-final_df$Outstanding.Balance[which(final_df$Performance.Tag==1)]
+t2<-final_df$Score[which(final_df$Performance.Tag==1)]    
+
+outstanding_ref <- cbind(default_users_ID,default_users_outstanding,scale(default_users_outstanding),t1,t2)
+
+possible_defaults_with_more_than_419_score<-data.frame(subset(outstanding_ref,t2>419))
+
+sum(possible_defaults_with_more_than_419_score$default_users_outstanding)
+```
+
+New credit loss : 212951202
+
+# approval rate (with scorecard)
+```{r, echo=FALSE}
+nrow(data.frame(subset(final_df,Score>419)))/nrow(final_df)
+```
+
+New approval rate : 18.33%
+
+Although net credit loss  is much lesser, Approval rate also goes down sharply. 
+Which in turn could cause less sales. Hence in this Trade-off between sales and risk,we could afford to be less conservative in terms of score cut off.
+From score distribution plot we can observe that by setting cut off to 395 we can cover much higher sales without risking too much credit loss.
+
+# With scorecard (Balanced cut-off)
+
+Credit loss
+
+```{r, echo=FALSE}
+possible_defaults_with_more_than_395_score<-data.frame(subset(outstanding_ref,t2>395))
+
+sum(possible_defaults_with_more_than_395_score$default_users_outstanding)
+```
+
+New credit loss : 1,71,29,81,767 
+
+# Aprroval rate
+
+```{r, echo=FALSE}
+nrow(data.frame(subset(final_df,Score>395)))/nrow(final_df)
+```
+
+New approval rate : 70.77%
+
+This gives a more balanced result.
