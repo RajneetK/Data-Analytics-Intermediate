@@ -567,11 +567,22 @@ ggplot(data_for_eda[which(data_for_eda$Performance.Tag == 1),] , aes(x = Outstan
   geom_density(color= "orange")
 
 ```
+
+
 2) IV Analysis and WOE
 
-WOE: Predictive power for an independent variable is determined by the amount of evidence available.
+The method is a good but crude way to understand the importance of variables
+for default prediction. We want to quantify the importance of each predictor variable.In other words, we need to find the 'information value' of each variable. 
+The weight of evidence (WOE) shows the predictive power of an independent variable 
+in relation to the dependent variable. Woe is a measure of how well a variable separates the good customers from the bad ones. 
 
-IV is a measure of the strength of the relationship between the two parties.
+So, woe= ln(Distribution of good/Distribution of Bads)
+
+
+Information value and WOE calculation:
+
+The information package is used for woe calculation. One slight change you need to perform before applying the "create_infotable".This package indicates "1" as a good customer but in our dataset, we have assigned "1" bad customers.Thus we have to change the label to get the correct value of woe value.
+
 
 Information Value	        Predictive Power
 < 0.02	                  useless for prediction
@@ -626,6 +637,85 @@ No.of.months.in.current.residence                  7.896308e-02
 Income                                             4.236710e-02
 No.of.months.in.current.company                    2.176502e-02
 Presence.of.open.home.loan                         1.695583e-02
+
+
+# Build model on demographic data : 
+
+```{r}
+set.seed(10001)
+
+demographic_df <- demographic_df[, -1]
+
+split_indices <- sample.split(demographic_df$Performance.Tag, SplitRatio = 0.70)
+
+demo_train <- demographic_df[split_indices, ]
+
+demo_test <- demographic_df[!split_indices, ]
+```
+
+# Logistic Regression Model: 
+
+```{r}
+initial_model = glm(Performance.Tag ~ ., data = demo_train, family = "binomial")
+```
+
+# Summary
+
+```{r}
+summary(initial_model)
+```
+
+# Sepwise
+
+```{r}
+best_model_1 <- glm(formula = Performance.Tag ~ Income + No.of.months.in.current.residence + 
+                      No.of.months.in.current.company, family = "binomial", data = demo_train)
+
+summary(best_model_1)
+
+vif(best_model_1)
+```
+
+```{r}
+final_model <- best_model_1
+```
+
+# Model Evaluation
+
+```{r}
+demo_predictions_logit <- predict(final_model, newdata = demo_test[, -1], type = "response")
+```
+
+# Summary
+
+```{r}
+summary(demo_predictions_logit)
+```
+```{r}
+summary(demo_predictions_logit)
+```
+
+# cutoff of 0.001
+```{r}
+predicted_response <- as.factor(ifelse(demo_predictions_logit >= 0.05, 1, 0))
+
+demo_test$Performance.Tag  <- as.factor(demo_test$Performance.Tag)
+
+conf <- confusionMatrix(demo_test$Performance.Tag,predicted_response, positive = "1")
+
+accuracy <- conf$overall[1]
+sensitivity <- conf$byClass[1]
+specificity <- conf$byClass[2]
+
+accuracy
+
+sensitivity
+
+specificity
+```
+Very bad model. The results are very poor. Thus, Demographic dataset alone could not provide a good results .
+
+
 
 # Correlation analysis
 
@@ -1717,3 +1807,15 @@ nrow(data.frame(subset(final_df,Score>395)))/nrow(final_df)
 New approval rate : 70.77%
 
 This gives a more balanced result.
+
+The objective is to minimize “Net Credit Loss” and Scorecard is used for determining desired trade-off between risk level and approval rate.
+
+
+
+#Conclusion
+
+Final analysis is as below –
+•	With suggested optimal cut off score of 395, avg. 71% of applicants would be approved.   Hence 29% applicants would be rejected.
+•	Assumption regarding credit loss- Outstanding balance of a defaulter is considered as credit loss for the specific user.
+•	Credit loss avoided by applying the model/scorecard implementation.
+
