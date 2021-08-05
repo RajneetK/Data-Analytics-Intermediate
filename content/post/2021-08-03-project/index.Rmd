@@ -1,11 +1,13 @@
 ---
-title: Project -Analytics
-author: Rajneetk
+title: "Project -Analytics"
+author: "Rajneetk"
 date: '2021-08-02'
-slug: project-analytics
+output:
+  html_document:
+    df_print: paged
 categories:
-  - tree based
-  - Data analytics
+- tree based
+- Data analytics
 tags: []
 description: Article description.
 featured: yes
@@ -16,6 +18,7 @@ shareImage: /images/path/share.png
 codeMaxLines: 10
 codeLineNumbers: no
 figurePositionShow: yes
+slug: project-analytics
 ---
 
 ** Group Project: Predicting Delinquent Customer **
